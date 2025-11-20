@@ -1,8 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Video Upload to R2</title>
+  <meta charset="UTF-8" />
+  <title>R2 Video Upload</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -12,17 +12,17 @@
     }
     #progress {
       width: 100%;
-      background: #ddd;
-      height: 25px;
-      border-radius: 5px;
-      margin-top: 15px;
+      background: #eee;
+      height: 30px;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-top: 20px;
       display: none;
     }
     #bar {
-      height: 100%;
       width: 0%;
-      background: green;
-      border-radius: 5px;
+      height: 100%;
+      background: #4caf50;
       transition: width 0.2s;
     }
   </style>
@@ -30,11 +30,7 @@
 <body>
 
 <h2>📤 Cloudflare R2 Video Upload</h2>
-
-<p>
-  Quyida videoni tanlab yuklang. Yuklash tugagach, sizga "Public URL" chiqadi –
-  uni Telegram botga yuboring.
-</p>
+<p>Videoni tanlang va yuklang. Tugaganda public URL chiqadi.</p>
 
 <input type="file" id="file" accept="video/*"><br><br>
 <button onclick="upload()">Upload</button>
@@ -45,26 +41,33 @@
 <p id="result"></p>
 
 <script>
+const ACCOUNT_ID = "55e450869c463ca9358af642d083fb36";
+const BUCKET = "fastora";
+
 function getQuery(name) {
   return new URL(window.location.href).searchParams.get(name);
 }
 
-const uploadURL = getQuery("upload_url");
-const publicURL = getQuery("public_url");
+const uploadId = getQuery("upload_id");
+const key = getQuery("key");
 
-if (!uploadURL || !publicURL) {
-  document.body.innerHTML = "<h3>❌ Presigned URL topilmadi. Botdan yuklang.</h3>";
+if (!uploadId || !key) {
+  document.body.innerHTML = "<h2>❌ upload_id yoki key topilmadi. Bot orqali sahifani oching.</h2>";
 }
 
 async function upload() {
   const file = document.getElementById("file").files[0];
-  if (!file) return alert("Avval video tanlang!");
+  if (!file) return alert("Videoni tanlang!");
 
   document.getElementById("progress").style.display = "block";
 
+  // 1️⃣ Faylni R2 ga yuborish (partNumber=1)
+  const uploadUrl =
+    `https://${ACCOUNT_ID}.r2.cloudflarestorage.com/${BUCKET}/${key}` +
+    `?uploadId=${uploadId}&partNumber=1`;
+
   const xhr = new XMLHttpRequest();
-  xhr.open("PUT", uploadURL, true);
-  xhr.setRequestHeader("Content-Type", file.type);
+  xhr.open("PUT", uploadUrl, true);
 
   xhr.upload.onprogress = (e) => {
     if (e.lengthComputable) {
@@ -73,18 +76,48 @@ async function upload() {
     }
   };
 
-  xhr.onload = () => {
-    if (xhr.status === 200) {
-      document.getElementById("status").innerText = "✅ Yuklandi!";
-      document.getElementById("result").innerHTML = `
-        Public URL:<br>
-        <code>${publicURL}</code><br><br>
-        Bu linkni <b>Telegram botga yuboring</b>.
-      `;
-    } else {
-      document.getElementById("status").innerText = "❌ Yuklashda xatolik!";
-      console.error(xhr.responseText);
+  xhr.onload = async () => {
+    if (xhr.status !== 200) {
+      document.getElementById("status").innerText = "❌ Upload failed!";
+      return;
     }
+
+    document.getElementById("status").innerText = "📦 R2ga yuklandi!";
+
+    // 2️⃣ Multipart uploadni yakunlash
+    const completeUrl =
+      `https://${ACCOUNT_ID}.r2.cloudflarestorage.com/${BUCKET}/${key}` +
+      `?uploadId=${uploadId}`;
+
+    const completeBody = `
+      <CompleteMultipartUpload>
+        <Part>
+          <PartNumber>1</PartNumber>
+          <ETag>"${xhr.getResponseHeader("ETag")}"</ETag>
+        </Part>
+      </CompleteMultipartUpload>
+    `;
+
+    const complete = await fetch(completeUrl, {
+      method: "POST",
+      body: completeBody
+    });
+
+    if (!complete.ok) {
+      document.getElementById("status").innerText = "❌ Yakunlashda xatolik!";
+      console.log(await complete.text());
+      return;
+    }
+
+    const publicUrl =
+      `https://${ACCOUNT_ID}.r2.cloudflarestorage.com/${BUCKET}/${key}`;
+
+    document.getElementById("status").innerHTML = "✅ Tayyor!";
+    document.getElementById("result").innerHTML = `
+      Public URL:<br>
+      <code>${publicUrl}</code><br><br>
+      Bu URLni Telegram botga yuboring.
+    `;
   };
 
   xhr.onerror = () => {
